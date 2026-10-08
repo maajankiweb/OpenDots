@@ -41,6 +41,14 @@ export async function api<T>(
     );
   return data as T;
 }
+let cachedToken: string | null = null;
+let cachedHeaders: Record<string, string> = {};
+
 export function authHeaders(): Record<string, string> {
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  if (token !== cachedToken) {
+    cachedToken = token;
+    cachedHeaders = token ? { Authorization: `Bearer ${token}` } : {};
+  }
+  return cachedHeaders;
 }
+

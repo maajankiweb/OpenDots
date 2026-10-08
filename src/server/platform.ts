@@ -19,7 +19,6 @@ import {
   type PlatformConfig,
 } from './platform-config.js';
 import { validateRuntimeScope } from './runtime-scope.js';
-import { learningSelector } from './learning.js';
 import { SetupTelemetry } from './setup-telemetry.js';
 export class Platform {
   private channelStartupFailed = false;
@@ -48,10 +47,7 @@ export class Platform {
       apiKey: config.intelligenceKey,
       apiUrl: config.intelligenceApiUrl,
       wsUrl: config.intelligenceWsUrl,
-      getLearningContainerId: learningSelector(
-        workspace,
-        config.slackDotId ?? workspace.dots()[0]?.id,
-      ),
+      getLearningContainerId: () => 'research-assistant',
     });
     const channels = [];
     if (config.slackChannel && config.slackTeam && config.slackUsers.length) {

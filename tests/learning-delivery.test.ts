@@ -179,3 +179,163 @@ it('native skill delivery fails the invocation before contacting the model when 
     store.close();
   }
 });
+
+it('connects to Learning Space "research-assistant", discovers skills, loads SKILL.md, and reads supporting files', async () => {
+  const store = new Store(':memory:');
+  const workspace = new WorkspaceStore(':memory:', 'owner');
+  try {
+    const dot = workspace.dots()[0];
+    workspace.updateDot(dot.id, {
+      ...dot,
+      learningContainerId: 'research-assistant',
+      skillDeliveryEnabled: true,
+    });
+    workspace.bindThread('thread-research', dot.id, 'Research thread');
+
+    const bytes = readFileSync(
+      new URL('./fixtures/learning-skills-with-files.zip', import.meta.url),
+    );
+    const etag = `"${createHash('sha256').update(bytes).digest('hex')}"`;
+
+    const getSnapshotsSpy = vi
+      .spyOn(CopilotKitIntelligence.prototype, 'getLearnedSkillsSnapshots')
+      .mockResolvedValue([
+        {
+          containerId: 'research-assistant',
+          status: 'snapshot',
+          bytes,
+          revision: 'fixture-v2',
+          etag,
+          contentType: 'application/zip',
+        },
+      ]);
+
+    const network = vi
+      .spyOn(globalThis, 'fetch')
+      // Step 1: Model sees catalog and decides to load the skill
+      .mockResolvedValueOnce(
+        completion(
+          {
+            role: 'assistant',
+            tool_calls: [
+              {
+                index: 0,
+                id: 'call-load-skill',
+                type: 'function',
+                function: {
+                  name: 'copilotkit_load_skill',
+                  arguments: JSON.stringify({
+                    skill_name: 'research-assistant/evidence-review',
+                  }),
+                },
+              },
+            ],
+          },
+          'tool_calls',
+        ),
+      )
+      // Step 2: After loading SKILL.md, model decides to read supporting reference file
+      .mockResolvedValueOnce(
+        completion(
+          {
+            role: 'assistant',
+            tool_calls: [
+              {
+                index: 0,
+                id: 'call-read-file',
+                type: 'function',
+                function: {
+                  name: 'copilotkit_read_skill_file',
+                  arguments: JSON.stringify({
+                    skill_name: 'research-assistant/evidence-review',
+                    path: 'references/guide.md',
+                  }),
+                },
+              },
+            ],
+          },
+          'tool_calls',
+        ),
+      )
+      // Step 3: Model returns final answer
+      .mockResolvedValueOnce(
+        completion({
+          role: 'assistant',
+          content: 'Evidence reviewed using supporting guide.',
+        }),
+      );
+
+    const agent = new DotAgent(
+      store,
+      workspace,
+      {
+        intelligenceKey: 'test-key',
+        apiKey: 'test-model-key',
+        model: 'test-model',
+        baseUrl: 'https://unused.invalid',
+        runtimeUrl: '',
+        voiceName: 'marin',
+        slackUsers: [],
+      },
+      dot.id,
+    );
+
+    const events = await lastValueFrom(
+      agent
+        .run({
+          threadId: 'thread-research',
+          runId: 'run-1',
+          messages: [
+            { id: 'm1', role: 'user', content: 'Please review research evidence.' },
+          ],
+          state: {},
+          tools: [],
+          context: [],
+          forwardedProps: {},
+        })
+        .pipe(toArray()),
+    );
+
+    // Verify snapshot request was made for container 'research-assistant'
+    expect(getSnapshotsSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        containers: [expect.objectContaining({ containerId: 'research-assistant' })],
+      }),
+    );
+
+    // Verify model received the catalog with qualified name
+    const firstRequestBody = String(network.mock.calls[0][1]?.body);
+    expect(firstRequestBody).toContain('research-assistant/evidence-review');
+    expect(firstRequestBody).toContain('copilotkit_load_skill');
+    expect(firstRequestBody).toContain('copilotkit_read_skill_file');
+
+    // Verify SKILL.md was loaded and emitted
+    const skillLoadResult = events.find(
+      (e) => e.type === EventType.TOOL_CALL_RESULT && e.toolCallId === 'call-load-skill',
+    );
+    expect(skillLoadResult).toBeDefined();
+    expect(skillLoadResult && 'content' in skillLoadResult ? skillLoadResult.content : '').toContain(
+      'Compare sources and clearly identify uncertainty',
+    );
+
+    // Verify supporting file references/guide.md was read
+    const fileReadResult = events.find(
+      (e) => e.type === EventType.TOOL_CALL_RESULT && e.toolCallId === 'call-read-file',
+    );
+    expect(fileReadResult).toBeDefined();
+    expect(fileReadResult && 'content' in fileReadResult ? fileReadResult.content : '').toContain(
+      'Supporting Guide',
+    );
+    expect(fileReadResult && 'content' in fileReadResult ? fileReadResult.content : '').toContain(
+      'Always verify cross-references in evidence',
+    );
+
+    // Verify final message
+    expect(JSON.stringify(events)).toContain(
+      'Evidence reviewed using supporting guide.',
+    );
+  } finally {
+    workspace.close();
+    store.close();
+  }
+});

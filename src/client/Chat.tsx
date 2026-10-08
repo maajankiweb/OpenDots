@@ -139,9 +139,18 @@ export function Chat({
     setDraft('');
     setSource('');
     setSourceOpen(false);
+    const previousAssistantCount = agent.messages.filter(
+      (message) => message.role === 'assistant',
+    ).length;
     try {
       const result = await copilotkit.runAgent({ agent });
-      if (!result.newMessages.some((message) => message.role === 'assistant'))
+      const currentAssistantCount = agent.messages.filter(
+        (message) => message.role === 'assistant',
+      ).length;
+      if (
+        !result.newMessages.some((message) => message.role === 'assistant') &&
+        currentAssistantCount <= previousAssistantCount
+      )
         throw new Error(
           'The current turn returned no response. Check the runtime connection and retry.',
         );

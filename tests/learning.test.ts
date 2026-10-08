@@ -6,6 +6,8 @@ import { afterEach, expect, it } from 'vitest';
 import type { RunAgentInput } from '@ag-ui/core';
 import { WorkspaceStore } from '../src/server/workspace.js';
 import { learningSelector } from '../src/server/learning.js';
+import { Store } from '../src/server/store.js';
+import { Platform } from '../src/server/platform.js';
 
 const cleanup: (() => void)[] = [];
 afterEach(() =>
@@ -163,4 +165,28 @@ it('rejects invalid container IDs and delivery without a container', () => {
     }),
   ).toThrow();
   expect(ws.dot(dot.id)?.learningContainerId).toBeNull();
+});
+
+it('routes future CopilotKit Threads to research-assistant via Platform intelligence config', () => {
+  const store = new Store(':memory:');
+  const ws = new WorkspaceStore(':memory:', 'owner');
+  try {
+    const platform = new Platform(store, ws, {
+      intelligenceKey: 'test-key',
+      apiKey: 'test-api-key',
+      model: 'test-model',
+      baseUrl: 'https://example.com',
+      runtimeUrl: 'http://localhost:4310/api/copilotkit',
+      voiceName: 'marin',
+      slackUsers: [],
+    });
+    expect(platform.intelligence).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const selector = (platform.intelligence as any).ɵgetLearningContainerId();
+    expect(typeof selector).toBe('function');
+    expect(selector()).toBe('research-assistant');
+  } finally {
+    ws.close();
+    store.close();
+  }
 });
